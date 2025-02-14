@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Particles and Vortices with Color Control</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: #000;
+      overflow: hidden;
+      height: 100%;
+    }
+    canvas {
+      display: block;
+    }
+    /* Menu styling */
+    #menu {
+      position: fixed;
+      top: 10px;
+      left: 10px;
+      background: rgba(0, 0, 0, 0.7);
+      padding: 10px;
+      border-radius: 5px;
+      color: #fff;
+      font-family: sans-serif;
+      font-size: 14px;
+      z-index: 100;
+    }
+    #menu label {
+      display: block;
+      margin-bottom: 5px;
+    }
+    #menu input, #menu button {
+      margin-bottom: 10px;
+      width: 100%;
+      box-sizing: border-box;
+    }
+    /* Toggle button styling */
+    #toggleMenu {
+      position: fixed;
+      top: 10px;
+      right: 10px;
+      z-index: 200;
+      background: rgba(0, 0, 0, 0.7);
+      color: #fff;
+      border: none;
+      padding: 8px 12px;
+      border-radius: 5px;
+      cursor: pointer;
+      font-family: sans-serif;
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+  <!-- Menu for user controls -->
+  <div id="menu">
+    <label for="bgPicker">Background Color:</label>
+    <input type="color" id="bgPicker" value="#000000">
+    <label for="particlePicker">Particle Color:</label>
+    <input type="color" id="particlePicker" value="#ffffff">
+    <label for="trailRange">Trail Opacity (0-1):</label>
+    <input type="range" id="trailRange" min="0" max="1" step="0.01" value="0.1">
+    <button id="increaseParticles">Increase Particles</button>
+    <button id="decreaseParticles">Decrease Particles</button>
+    <p style="font-size:12px;">(Double-click to add vortex, right-click to remove, drag to move, scroll to resize)</p>
+  </div>
+
+  <!-- Toggle Button for hiding/revealing the menu -->
+  <button id="toggleMenu">Hide Menu</button>
+
+  <canvas id="canvas"></canvas>
+  <script>
+    // Declare configuration variables as let, so they can be updated.
+    let backgroundColor = "#000000";  // default background color
+    let particleColor = "#ffffff";    // default particle color
+    let trailingAlpha = 0.1;          // default trail opacity
+
+    // Utility functions to convert hex color to rgba string with alpha
+    function hexToRGB(hex) {
+      hex = hex.replace(/^#/, '');
+      if (hex.length === 3) {
+        hex = hex.split('').map(c => c + c).join('');
+      }
+      const bigint = parseInt(hex, 16);
+      const r = (bigint >> 16) & 255;
+      const g = (bigint >> 8) & 255;
+      const b = bigint & 255;
+      return { r, g, b };
+    }
+
+    function hexToRGBA(hex, alpha) {
+      const { r, g, b } = hexToRGB(hex);
+      return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+    }
+
+    // Set the initial background style
+    document.body.style.background = backgroundColor;
+
+    // Get the canvas and context
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d");
+
+    // Resize canvas to fill the window
+    function resizeCanvas() {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    }
+    window.addEventListener("resize", resizeCanvas);
+    resizeCanvas();
+
+    // Particle class
+    class Particle {
+      constructor(x, y) {
+        this.x = x;
+        this.y = y;
+      }
+
+      // Update particle position based on the velocity field
+      update() {
+        const v = getField(this.x, this.y);
+        this.x += v.x;
+        this.y += v.y;
+
+        // If particle goes off-screen, respawn it along a random edge.
+        if (this.x < 0 || this.x > canvas.width || this.y < 0 || this.y > canvas.height) {
+          if (Math.random() < 0.5) {
+            // Respawn on vertical edge
+            this.x = (Math.random() < 0.5) ? 0 : canvas.width;
+            this.y = Math.random() * canvas.height;
+          } else {
+            // Respawn on horizontal edge
+            this.x = Math.random() * canvas.width;
+            this.y = (Math.random() < 0.5) ? 0 : canvas.height;
+          }
+        }
+      }
+
+      draw() {
+        ctx.fillStyle = particleColor;
+        ctx.fillRect(this.x, this.y, 1, 1);
+      }
+    }
+
+    // Create many particles
+    let numParticles = 15000; // initial count
+    const particles = [];
+    for (let i = 0; i < numParticles; i++) {
+      particles.push(new Particle(Math.random() * canvas.width, Math.random() * canvas.height));
+    }
+
+    // Define vortices to simulate eddy currents.
+    let vortices = [
+      { x: canvas.width * 0.3, y: canvas.height * 0.5, strength: 200 },
+      { x: canvas.width * 0.7, y: canvas.height * 0.5, strength: -200 },
+      { x: canvas.width * 0.5, y: canvas.height * 0.3, strength: 150 },
+      { x: canvas.width * 0.5, y: canvas.height * 0.7, strength: -150 }
+    ];
+
+    // Function to compute the velocity field at (x, y)
+    function getField(x, y) {
+      let vx = 0, vy = 0;
+      vortices.forEach(vortex => {
+        const dx = x - vortex.x;
+        const dy = y - vortex.y;
+        const distSq = dx * dx + dy * dy + 100;
+        const factor = vortex.strength / distSq;
+        vx += factor * (-dy);
+        vy += factor * (dx);
+      });
+      return { x: vx, y: vy };
+    }
+
+    // Initial trailing color based on the background and trailingAlpha.
+    let trailingColor = hexToRGBA(backgroundColor, trailingAlpha);
+
+    // -----------------------------
+    // Vortex Interaction Variables
+    // -----------------------------
+    let selectedVortex = null;
+    let dragOffsetX = 0;
+    let dragOffsetY = 0;
+    const vortexThreshold = 10; // pixels
+
+    // -----------------------------
+    // Animation loop
+    // -----------------------------
+    function animate() {
+      requestAnimationFrame(animate);
+      
+      // Draw a semi-transparent rectangle for the trail effect
+      ctx.fillStyle = trailingColor;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // Update and draw each particle
+      particles.forEach(p => {
+        p.update();
+        p.draw();
+      });
+      
+      // Draw vortices for visualization
+      vortices.forEach(vortex => {
+        ctx.beginPath();
+        ctx.arc(vortex.x, vortex.y, 8, 0, Math.PI * 2);
+        ctx.strokeStyle = '#ff0000';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      });
+    }
+
+    // Start the animation
+    animate();
+
+    // -----------------------------
+    // Menu event listeners for live updates
+    // -----------------------------
+    const bgPicker = document.getElementById("bgPicker");
+    const particlePicker = document.getElementById("particlePicker");
+    const trailRange = document.getElementById("trailRange");
+    const increaseParticlesBtn = document.getElementById("increaseParticles");
+    const decreaseParticlesBtn = document.getElementById("decreaseParticles");
+
+    // Background color update
+    bgPicker.addEventListener("input", (e) => {
+      backgroundColor = e.target.value;
+      document.body.style.background = backgroundColor;
+      trailingColor = hexToRGBA(backgroundColor, trailingAlpha);
+    });
+
+    // Particle color update
+    particlePicker.addEventListener("input", (e) => {
+      particleColor = e.target.value;
+    });
+
+    // Trail opacity update
+    trailRange.addEventListener("input", (e) => {
+      trailingAlpha = parseFloat(e.target.value);
+      trailingColor = hexToRGBA(backgroundColor, trailingAlpha);
+    });
+
+    // Particle count controls
+    increaseParticlesBtn.addEventListener("click", () => {
+      const additional = 1000;
+      for (let i = 0; i < additional; i++) {
+        particles.push(new Particle(Math.random() * canvas.width, Math.random() * canvas.height));
+      }
+    });
+
+    decreaseParticlesBtn.addEventListener("click", () => {
+      const removal = 1000;
+      particles.splice(0, removal);
+    });
+
+    // -----------------------------
+    // Toggle Menu functionality
+    // -----------------------------
+    const toggleMenuBtn = document.getElementById("toggleMenu");
+    const menu = document.getElementById("menu");
+
+    toggleMenuBtn.addEventListener("click", () => {
+      if (menu.style.display === "none") {
+        menu.style.display = "block";
+        toggleMenuBtn.textContent = "Hide Menu";
+      } else {
+        menu.style.display = "none";
+        toggleMenuBtn.textContent = "Show Menu";
+      }
+    });
+
+    // -----------------------------
+    // Vortex Interactivity on Canvas
+    // -----------------------------
+    canvas.addEventListener('mousedown', (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+      // Check if the click is near any vortex
+      for (let vortex of vortices) {
+        const dx = mouseX - vortex.x;
+        const dy = mouseY - vortex.y;
+        if (Math.sqrt(dx * dx + dy * dy) < vortexThreshold) {
+          selectedVortex = vortex;
+          dragOffsetX = dx;
+          dragOffsetY = dy;
+          break;
+        }
+      }
+    });
+
+    canvas.addEventListener('mousemove', (e) => {
+      if (selectedVortex) {
+        const rect = canvas.getBoundingClientRect();
+        const mouseX = e.clientX - rect.left;
+        const mouseY = e.clientY - rect.top;
+        selectedVortex.x = mouseX - dragOffsetX;
+        selectedVortex.y = mouseY - dragOffsetY;
+      }
+    });
+
+    canvas.addEventListener('mouseup', () => {
+      selectedVortex = null;
+    });
+
+    canvas.addEventListener('mouseleave', () => {
+      selectedVortex = null;
+    });
+
+    // Double-click to add a new vortex
+    canvas.addEventListener('dblclick', (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+      vortices.push({ x: mouseX, y: mouseY, strength: 100 });
+    });
+
+    // Right-click to remove a vortex
+    canvas.addEventListener('contextmenu', (e) => {
+      e.preventDefault(); // prevent the default context menu
+      const rect = canvas.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+      for (let i = 0; i < vortices.length; i++) {
+        const vortex = vortices[i];
+        const dx = mouseX - vortex.x;
+        const dy = mouseY - vortex.y;
+        if (Math.sqrt(dx * dx + dy * dy) < vortexThreshold) {
+          vortices.splice(i, 1);
+          break;
+        }
+      }
+    });
+
+    // Use the mouse wheel to adjust the strength of the selected vortex.
+    canvas.addEventListener('wheel', (e) => {
+      if (selectedVortex) {
+        e.preventDefault();
+        // Adjust strength (scrolling up increases, down decreases)
+        selectedVortex.strength += e.deltaY * -0.1;
+      }
+    });
+  </script>
+</body>
+</html>
